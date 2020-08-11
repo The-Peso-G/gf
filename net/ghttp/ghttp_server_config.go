@@ -73,6 +73,7 @@ type ServerConfig struct {
 	PProfPattern      string            // PProf: PProf service pattern for router.
 	FormParsingMemory int64             // Other: Max memory in bytes which can be used for parsing multimedia form.
 	NameToUriType     int               // Other: Type for converting struct method name to URI when registering routes.
+	RouteOverWrite    bool              // Other: Allow overwrite the route if duplicated.
 	DumpRouterMap     bool              // Other: Whether automatically dump router map when server starts.
 	Graceful          bool              // Other: Enable graceful reload feature for all servers of the process.
 }
@@ -205,7 +206,7 @@ func (s *Server) EnableHTTPS(certFile, keyFile string, tlsConfig ...*tls.Config)
 		}
 	}
 	if certFileRealPath == "" {
-		glog.Fatal(fmt.Sprintf(`[ghttp] EnableHTTPS failed: certFile "%s" does not exist`, certFile))
+		s.Logger().Fatal(fmt.Sprintf(`[ghttp] EnableHTTPS failed: certFile "%s" does not exist`, certFile))
 	}
 	keyFileRealPath := gfile.RealPath(keyFile)
 	if keyFileRealPath == "" {
@@ -215,7 +216,7 @@ func (s *Server) EnableHTTPS(certFile, keyFile string, tlsConfig ...*tls.Config)
 		}
 	}
 	if keyFileRealPath == "" {
-		glog.Fatal(fmt.Sprintf(`[ghttp] EnableHTTPS failed: keyFile "%s" does not exist`, keyFile))
+		s.Logger().Fatal(fmt.Sprintf(`[ghttp] EnableHTTPS failed: keyFile "%s" does not exist`, keyFile))
 	}
 	s.config.HTTPSCertPath = certFileRealPath
 	s.config.HTTPSKeyPath = keyFileRealPath

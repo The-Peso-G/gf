@@ -10,14 +10,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/gogf/gf/container/gmap"
 	"reflect"
-	"strings"
 	"time"
 
 	"github.com/gogf/gf/container/gset"
 	"github.com/gogf/gf/text/gstr"
-
-	"github.com/gogf/gf/container/gmap"
 
 	"github.com/gogf/gf/util/gconv"
 )
@@ -26,6 +24,7 @@ import (
 type Model struct {
 	db            DB             // Underlying DB interface.
 	tx            *TX            // Underlying TX interface.
+	schema        string         // Custom database schema.
 	linkType      int            // Mark for operation on master or slave.
 	tablesInit    string         // Table names when model initialization.
 	tables        string         // Operation table names, which can be more than one table names and aliases, like: "user", "user u", "user u, user_detail ud".
@@ -65,36 +64,45 @@ const (
 	OPTION_ALLOWEMPTY
 )
 
-// Table creates and returns a new ORM model.
+// Table creates and returns a new ORM model from given schema.
 // The parameter <tables> can be more than one table names, like :
 // "user", "user u", "user, user_detail", "user u, user_detail ud"
-func (bs *dbBase) Table(tables string) *Model {
+func (bs *dbBase) Table(table string) *Model {
+	table = bs.db.handleTableName(table)
 	return &Model{
 		db:         bs.db,
-		tablesInit: tables,
-		tables:     bs.db.quoteWord(tables),
+		tablesInit: table,
+		tables:     table,
 		fields:     "*",
 		start:      -1,
 		offset:     -1,
 		safe:       false,
 		option:     OPTION_ALLOWEMPTY,
 	}
+}
+
+// Model is alias of dbBase.Table.
+// See dbBase.Table.
+func (bs *dbBase) Model(table string) *Model {
+	return bs.db.Table(table)
 }
 
 // From is alias of dbBase.Table.
 // See dbBase.Table.
-func (bs *dbBase) From(tables string) *Model {
-	return bs.db.Table(tables)
+// Deprecated.
+func (bs *dbBase) From(table string) *Model {
+	return bs.db.Table(table)
 }
 
 // Table acts like dbBase.Table except it operates on transaction.
 // See dbBase.Table.
-func (tx *TX) Table(tables string) *Model {
+func (tx *TX) Table(table string) *Model {
+	table = tx.db.handleTableName(table)
 	return &Model{
 		db:         tx.db,
 		tx:         tx,
-		tablesInit: tables,
-		tables:     tx.db.quoteWord(tables),
+		tablesInit: table,
+		tables:     table,
 		fields:     "*",
 		start:      -1,
 		offset:     -1,
@@ -103,16 +111,47 @@ func (tx *TX) Table(tables string) *Model {
 	}
 }
 
-// From is alias of tx.Table.
+// Model is alias of tx.Table.
 // See tx.Table.
-func (tx *TX) From(tables string) *Model {
-	return tx.Table(tables)
+func (tx *TX) Model(table string) *Model {
+	return tx.Table(table)
 }
 
-// TX sets the transaction for current operation.
+// From is alias of tx.Table.
+// See tx.Table.
+// Deprecated.
+func (tx *TX) From(table string) *Model {
+	return tx.Table(table)
+}
+
+// As sets an alias name for current table.
+func (m *Model) As(as string) *Model {
+	if m.tables != "" {
+		model := m.getModel()
+		model.tables = gstr.TrimRight(model.tables) + " AS " + as
+		return model
+	}
+	return m
+}
+
+// DB sets/changes the db object for current operation.
+func (m *Model) DB(db DB) *Model {
+	model := m.getModel()
+	model.db = db
+	return model
+}
+
+// TX sets/changes the transaction for current operation.
 func (m *Model) TX(tx *TX) *Model {
 	model := m.getModel()
 	model.tx = tx
+	return model
+}
+
+// Schema sets the schema for current operation.
+func (m *Model) Schema(schema string) *Model {
+	model := m.getModel()
+	model.schema = schema
 	return model
 }
 
@@ -175,23 +214,23 @@ func (m *Model) getModel() *Model {
 }
 
 // LeftJoin does "LEFT JOIN ... ON ..." statement on the model.
-func (m *Model) LeftJoin(joinTable string, on string) *Model {
+func (m *Model) LeftJoin(table string, on string) *Model {
 	model := m.getModel()
-	model.tables += fmt.Sprintf(" LEFT JOIN %s ON (%s)", joinTable, on)
+	model.tables += fmt.Sprintf(" LEFT JOIN %s ON (%s)", m.db.handleTableName(table), on)
 	return model
 }
 
 // RightJoin does "RIGHT JOIN ... ON ..." statement on the model.
-func (m *Model) RightJoin(joinTable string, on string) *Model {
+func (m *Model) RightJoin(table string, on string) *Model {
 	model := m.getModel()
-	model.tables += fmt.Sprintf(" RIGHT JOIN %s ON (%s)", joinTable, on)
+	model.tables += fmt.Sprintf(" RIGHT JOIN %s ON (%s)", m.db.handleTableName(table), on)
 	return model
 }
 
 // InnerJoin does "INNER JOIN ... ON ..." statement on the model.
-func (m *Model) InnerJoin(joinTable string, on string) *Model {
+func (m *Model) InnerJoin(table string, on string) *Model {
 	model := m.getModel()
-	model.tables += fmt.Sprintf(" INNER JOIN %s ON (%s)", joinTable, on)
+	model.tables += fmt.Sprintf(" INNER JOIN %s ON (%s)", m.db.handleTableName(table), on)
 	return model
 }
 
@@ -273,6 +312,18 @@ func (m *Model) Where(where interface{}, args ...interface{}) *Model {
 	return model
 }
 
+// WherePri does the same logic as Model.Where except that if the parameter <where>
+// is a single condition like int/string/float/slice, it treats the condition as the primary
+// key value. That is, if primary key is "id" and given <where> parameter as "123", the
+// WherePri function treats it as "id=123", but Model.Where treats it as string "123".
+func (m *Model) WherePri(where interface{}, args ...interface{}) *Model {
+	if len(args) > 0 {
+		return m.Where(where, args...)
+	}
+	newWhere := GetPrimaryKeyCondition(m.getPrimaryKey(), where)
+	return m.Where(newWhere[0], newWhere[1:]...)
+}
+
 // And adds "AND" condition to the where statement.
 func (m *Model) And(where interface{}, args ...interface{}) *Model {
 	model := m.getModel()
@@ -301,20 +352,32 @@ func (m *Model) Or(where interface{}, args ...interface{}) *Model {
 	return model
 }
 
-// GroupBy sets the "GROUP BY" statement for the model.
-func (m *Model) GroupBy(groupBy string) *Model {
+// Group sets the "GROUP BY" statement for the model.
+func (m *Model) Group(groupBy string) *Model {
 	model := m.getModel()
-	model.groupBy = groupBy
+	model.groupBy = m.db.quoteString(groupBy)
 	return model
 }
 
-// OrderBy sets the "ORDER BY" statement for the model.
-func (m *Model) OrderBy(orderBy string) *Model {
+// GroupBy is alias of Model.Group.
+// See Model.Group.
+// Deprecated.
+func (m *Model) GroupBy(groupBy string) *Model {
+	return m.Group(groupBy)
+}
+
+// Order sets the "ORDER BY" statement for the model.
+func (m *Model) Order(orderBy string) *Model {
 	model := m.getModel()
-	array := strings.Split(orderBy, " ")
-	array[0] = m.db.quoteWord(array[0])
-	model.orderBy = strings.Join(array, " ")
+	model.orderBy = m.db.quoteString(orderBy)
 	return model
+}
+
+// OrderBy is alias of Model.Order.
+// See Model.Order.
+// Deprecated.
+func (m *Model) OrderBy(orderBy string) *Model {
+	return m.Order(orderBy)
 }
 
 // Limit sets the "LIMIT" statement for the model.
@@ -341,14 +404,24 @@ func (m *Model) Offset(offset int) *Model {
 	return model
 }
 
-// ForPage sets the paging number for the model.
+// Page sets the paging number for the model.
 // The parameter <page> is started from 1 for paging.
 // Note that, it differs that the Limit function start from 0 for "LIMIT" statement.
-func (m *Model) ForPage(page, limit int) *Model {
+func (m *Model) Page(page, limit int) *Model {
 	model := m.getModel()
+	if page <= 0 {
+		page = 1
+	}
 	model.start = (page - 1) * limit
 	model.limit = limit
 	return model
+}
+
+// ForPage is alias of Model.Page.
+// See Model.Page.
+// Deprecated.
+func (m *Model) ForPage(page, limit int) *Model {
+	return m.Page(page, limit)
 }
 
 // Batch sets the batch operation number for the model.
@@ -432,6 +505,441 @@ func (m *Model) Data(data ...interface{}) *Model {
 	return model
 }
 
+// Insert does "INSERT INTO ..." statement for the model.
+// The optional parameter <data> is the same as the parameter of Model.Data function,
+// see Model.Data.
+func (m *Model) Insert(data ...interface{}) (result sql.Result, err error) {
+	if len(data) > 0 {
+		return m.Data(data...).Insert()
+	}
+	defer func() {
+		if err == nil {
+			m.checkAndRemoveCache()
+		}
+	}()
+	if m.data == nil {
+		return nil, errors.New("inserting into table with empty data")
+	}
+
+	if list, ok := m.data.(List); ok {
+		// Batch insert.
+		batch := 10
+		if m.batch > 0 {
+			batch = m.batch
+		}
+		return m.db.doBatchInsert(
+			m.getLink(true),
+			m.tables,
+			m.filterDataForInsertOrUpdate(list),
+			gINSERT_OPTION_DEFAULT,
+			batch,
+		)
+	} else if data, ok := m.data.(Map); ok {
+		// Single insert.
+		return m.db.doInsert(
+			m.getLink(true),
+			m.tables,
+			m.filterDataForInsertOrUpdate(data),
+			gINSERT_OPTION_DEFAULT,
+		)
+	}
+	return nil, errors.New("inserting into table with invalid data type")
+}
+
+// Replace does "REPLACE INTO ..." statement for the model.
+// The optional parameter <data> is the same as the parameter of Model.Data function,
+// see Model.Data.
+func (m *Model) Replace(data ...interface{}) (result sql.Result, err error) {
+	if len(data) > 0 {
+		return m.Data(data...).Replace()
+	}
+	defer func() {
+		if err == nil {
+			m.checkAndRemoveCache()
+		}
+	}()
+	if m.data == nil {
+		return nil, errors.New("replacing into table with empty data")
+	}
+	if list, ok := m.data.(List); ok {
+		// Batch replace.
+		batch := 10
+		if m.batch > 0 {
+			batch = m.batch
+		}
+		return m.db.doBatchInsert(
+			m.getLink(true),
+			m.tables,
+			m.filterDataForInsertOrUpdate(list),
+			gINSERT_OPTION_REPLACE,
+			batch,
+		)
+	} else if data, ok := m.data.(Map); ok {
+		// Single insert.
+		return m.db.doInsert(
+			m.getLink(true),
+			m.tables,
+			m.filterDataForInsertOrUpdate(data),
+			gINSERT_OPTION_REPLACE,
+		)
+	}
+	return nil, errors.New("replacing into table with invalid data type")
+}
+
+// Save does "INSERT INTO ... ON DUPLICATE KEY UPDATE..." statement for the model.
+// The optional parameter <data> is the same as the parameter of Model.Data function,
+// see Model.Data.
+//
+// It updates the record if there's primary or unique index in the saving data,
+// or else it inserts a new record into the table.
+func (m *Model) Save(data ...interface{}) (result sql.Result, err error) {
+	if len(data) > 0 {
+		return m.Data(data...).Save()
+	}
+	defer func() {
+		if err == nil {
+			m.checkAndRemoveCache()
+		}
+	}()
+	if m.data == nil {
+		return nil, errors.New("saving into table with empty data")
+	}
+	if list, ok := m.data.(List); ok {
+		// Batch save.
+		batch := gDEFAULT_BATCH_NUM
+		if m.batch > 0 {
+			batch = m.batch
+		}
+		return m.db.doBatchInsert(
+			m.getLink(true),
+			m.tables,
+			m.filterDataForInsertOrUpdate(list),
+			gINSERT_OPTION_SAVE,
+			batch,
+		)
+	} else if data, ok := m.data.(Map); ok {
+		// Single save.
+		return m.db.doInsert(
+			m.getLink(true),
+			m.tables,
+			m.filterDataForInsertOrUpdate(data),
+			gINSERT_OPTION_SAVE,
+		)
+	}
+	return nil, errors.New("saving into table with invalid data type")
+}
+
+// Update does "UPDATE ... " statement for the model.
+//
+// If the optional parameter <dataAndWhere> is given, the dataAndWhere[0] is the updated data field,
+// and dataAndWhere[1:] is treated as where condition fields.
+// Also see Model.Data and Model.Where functions.
+func (m *Model) Update(dataAndWhere ...interface{}) (result sql.Result, err error) {
+	if len(dataAndWhere) > 0 {
+		if len(dataAndWhere) > 2 {
+			return m.Data(dataAndWhere[0]).Where(dataAndWhere[1], dataAndWhere[2:]...).Update()
+		} else if len(dataAndWhere) == 2 {
+			return m.Data(dataAndWhere[0]).Where(dataAndWhere[1]).Update()
+		} else {
+			return m.Data(dataAndWhere[0]).Update()
+		}
+	}
+	defer func() {
+		if err == nil {
+			m.checkAndRemoveCache()
+		}
+	}()
+	if m.data == nil {
+		return nil, errors.New("updating table with empty data")
+	}
+	condition, conditionArgs := m.formatCondition(false)
+	return m.db.doUpdate(
+		m.getLink(true),
+		m.tables,
+		m.filterDataForInsertOrUpdate(m.data),
+		condition,
+		conditionArgs...,
+	)
+}
+
+// Delete does "DELETE FROM ... " statement for the model.
+// The optional parameter <where> is the same as the parameter of Model.Where function,
+// see Model.Where.
+func (m *Model) Delete(where ...interface{}) (result sql.Result, err error) {
+	if len(where) > 0 {
+		return m.Where(where[0], where[1:]...).Delete()
+	}
+	defer func() {
+		if err == nil {
+			m.checkAndRemoveCache()
+		}
+	}()
+	condition, conditionArgs := m.formatCondition(false)
+	return m.db.doDelete(m.getLink(true), m.tables, condition, conditionArgs...)
+}
+
+// Select is alias of Model.All.
+// See Model.All.
+// Deprecated.
+func (m *Model) Select(where ...interface{}) (Result, error) {
+	return m.All(where...)
+}
+
+// All does "SELECT FROM ..." statement for the model.
+// It retrieves the records from table and returns the result as slice type.
+// It returns nil if there's no record retrieved with the given conditions from table.
+//
+// The optional parameter <where> is the same as the parameter of Model.Where function,
+// see Model.Where.
+func (m *Model) All(where ...interface{}) (Result, error) {
+	if len(where) > 0 {
+		return m.Where(where[0], where[1:]...).All()
+	}
+	condition, conditionArgs := m.formatCondition(false)
+	return m.getAll(fmt.Sprintf("SELECT %s FROM %s%s", m.fields, m.tables, condition), conditionArgs...)
+}
+
+// One retrieves one record from table and returns the result as map type.
+// It returns nil if there's no record retrieved with the given conditions from table.
+//
+// The optional parameter <where> is the same as the parameter of Model.Where function,
+// see Model.Where.
+func (m *Model) One(where ...interface{}) (Record, error) {
+	if len(where) > 0 {
+		return m.Where(where[0], where[1:]...).One()
+	}
+	condition, conditionArgs := m.formatCondition(true)
+	all, err := m.getAll(fmt.Sprintf("SELECT %s FROM %s%s", m.fields, m.tables, condition), conditionArgs...)
+	if err != nil {
+		return nil, err
+	}
+	if len(all) > 0 {
+		return all[0], nil
+	}
+	return nil, nil
+}
+
+// Value retrieves a specified record value from table and returns the result as interface type.
+// It returns nil if there's no record found with the given conditions from table.
+//
+// If the optional parameter <fieldsAndWhere> is given, the fieldsAndWhere[0] is the selected fields
+// and fieldsAndWhere[1:] is treated as where condition fields.
+// Also see Model.Fields and Model.Where functions.
+func (m *Model) Value(fieldsAndWhere ...interface{}) (Value, error) {
+	if len(fieldsAndWhere) > 0 {
+		if len(fieldsAndWhere) > 2 {
+			return m.Fields(gconv.String(fieldsAndWhere[0])).Where(fieldsAndWhere[1], fieldsAndWhere[2:]...).Value()
+		} else if len(fieldsAndWhere) == 2 {
+			return m.Fields(gconv.String(fieldsAndWhere[0])).Where(fieldsAndWhere[1]).Value()
+		} else {
+			return m.Fields(gconv.String(fieldsAndWhere[0])).Value()
+		}
+	}
+	one, err := m.One()
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range one {
+		return v, nil
+	}
+	return nil, nil
+}
+
+// Struct retrieves one record from table and converts it into given struct.
+// The parameter <pointer> should be type of *struct/**struct. If type **struct is given,
+// it can create the struct internally during converting.
+//
+// The optional parameter <where> is the same as the parameter of Model.Where function,
+// see Model.Where.
+//
+// Note that it returns sql.ErrNoRows if there's no record retrieved with the given conditions
+// from table.
+//
+// Eg:
+// user := new(User)
+// err  := db.Table("user").Where("id", 1).Struct(user)
+//
+// user := (*User)(nil)
+// err  := db.Table("user").Where("id", 1).Struct(&user)
+func (m *Model) Struct(pointer interface{}, where ...interface{}) error {
+	one, err := m.One(where...)
+	if err != nil {
+		return err
+	}
+	if len(one) == 0 {
+		return sql.ErrNoRows
+	}
+	return one.Struct(pointer)
+}
+
+// Structs retrieves records from table and converts them into given struct slice.
+// The parameter <pointer> should be type of *[]struct/*[]*struct. It can create and fill the struct
+// slice internally during converting.
+//
+// The optional parameter <where> is the same as the parameter of Model.Where function,
+// see Model.Where.
+//
+// Note that it returns sql.ErrNoRows if there's no record retrieved with the given conditions
+// from table.
+//
+// Eg:
+// users := ([]User)(nil)
+// err := db.Table("user").Structs(&users)
+//
+// users := ([]*User)(nil)
+// err := db.Table("user").Structs(&users)
+func (m *Model) Structs(pointer interface{}, where ...interface{}) error {
+	all, err := m.All(where...)
+	if err != nil {
+		return err
+	}
+	if len(all) == 0 {
+		return sql.ErrNoRows
+	}
+	return all.Structs(pointer)
+}
+
+// Scan automatically calls Struct or Structs function according to the type of parameter <pointer>.
+// It calls function Struct if <pointer> is type of *struct/**struct.
+// It calls function Structs if <pointer> is type of *[]struct/*[]*struct.
+//
+// The optional parameter <where> is the same as the parameter of Model.Where function,
+// see Model.Where.
+//
+// Note that it returns sql.ErrNoRows if there's no record retrieved with the given conditions
+// from table.
+//
+// Eg:
+// user := new(User)
+// err  := db.Table("user").Where("id", 1).Struct(user)
+//
+// user := (*User)(nil)
+// err  := db.Table("user").Where("id", 1).Struct(&user)
+//
+// users := ([]User)(nil)
+// err := db.Table("user").Structs(&users)
+//
+// users := ([]*User)(nil)
+// err := db.Table("user").Structs(&users)
+func (m *Model) Scan(pointer interface{}, where ...interface{}) error {
+	t := reflect.TypeOf(pointer)
+	k := t.Kind()
+	if k != reflect.Ptr {
+		return fmt.Errorf("params should be type of pointer, but got: %v", k)
+	}
+	switch t.Elem().Kind() {
+	case reflect.Array:
+	case reflect.Slice:
+		return m.Structs(pointer, where...)
+	default:
+		return m.Struct(pointer, where...)
+	}
+	return nil
+}
+
+// Count does "SELECT COUNT(x) FROM ..." statement for the model.
+// The optional parameter <where> is the same as the parameter of Model.Where function,
+// see Model.Where.
+func (m *Model) Count(where ...interface{}) (int, error) {
+	if len(where) > 0 {
+		return m.Where(where[0], where[1:]...).Count()
+	}
+	countFields := "COUNT(1)"
+	if m.fields != "" && m.fields != "*" {
+		countFields = fmt.Sprintf(`COUNT(%s)`, m.fields)
+	}
+	condition, conditionArgs := m.formatCondition(false)
+	s := fmt.Sprintf("SELECT %s FROM %s %s", countFields, m.tables, condition)
+	if len(m.groupBy) > 0 {
+		s = fmt.Sprintf("SELECT COUNT(1) FROM (%s) count_alias", s)
+	}
+	list, err := m.getAll(s, conditionArgs...)
+	if err != nil {
+		return 0, err
+	}
+	if len(list) > 0 {
+		for _, v := range list[0] {
+			return v.Int(), nil
+		}
+	}
+	return 0, nil
+}
+
+// FindOne retrieves and returns a single Record by Model.WherePri and Model.One.
+// Also see Model.WherePri and Model.One.
+func (m *Model) FindOne(where ...interface{}) (Record, error) {
+	if len(where) > 0 {
+		return m.WherePri(where[0], where[1:]...).One()
+	}
+	return m.One()
+}
+
+// FindAll retrieves and returns Result by by Model.WherePri and Model.All.
+// Also see Model.WherePri and Model.All.
+func (m *Model) FindAll(where ...interface{}) (Result, error) {
+	if len(where) > 0 {
+		return m.WherePri(where[0], where[1:]...).All()
+	}
+	return m.All()
+}
+
+// FindValue retrieves and returns single field value by Model.WherePri and Model.Value.
+// Also see Model.WherePri and Model.Value.
+func (m *Model) FindValue(fieldsAndWhere ...interface{}) (Value, error) {
+	if len(fieldsAndWhere) >= 2 {
+		return m.WherePri(fieldsAndWhere[1], fieldsAndWhere[2:]...).Fields(gconv.String(fieldsAndWhere[0])).Value()
+	}
+	if len(fieldsAndWhere) == 1 {
+		return m.Fields(gconv.String(fieldsAndWhere[0])).Value()
+	}
+	return m.Value()
+}
+
+// FindCount retrieves and returns the record number by Model.WherePri and Model.Count.
+// Also see Model.WherePri and Model.Count.
+func (m *Model) FindCount(where ...interface{}) (int, error) {
+	if len(where) > 0 {
+		return m.WherePri(where[0], where[1:]...).Count()
+	}
+	return m.Count()
+}
+
+// FindScan retrieves and returns the record/records by Model.WherePri and Model.Scan.
+// Also see Model.WherePri and Model.Scan.
+func (m *Model) FindScan(pointer interface{}, where ...interface{}) error {
+	if len(where) > 0 {
+		return m.WherePri(where[0], where[1:]...).Scan(pointer)
+	}
+	return m.Scan(pointer)
+}
+
+// Chunk iterates the table with given size and callback function.
+func (m *Model) Chunk(limit int, callback func(result Result, err error) bool) {
+	page := m.start
+	if page == 0 {
+		page = 1
+	}
+	model := m
+	for {
+		model = model.Page(page, limit)
+		data, err := model.All()
+		if err != nil {
+			callback(nil, err)
+			break
+		}
+		if len(data) == 0 {
+			break
+		}
+		if callback(data, err) == false {
+			break
+		}
+		if len(data) < limit {
+			break
+		}
+		page++
+	}
+}
+
 // filterDataForInsertOrUpdate does filter feature with data for inserting/updating operations.
 // Note that, it does not filter list item, which is also type of map, for "omit empty" feature.
 func (m *Model) filterDataForInsertOrUpdate(data interface{}) interface{} {
@@ -450,7 +958,7 @@ func (m *Model) filterDataForInsertOrUpdate(data interface{}) interface{} {
 // Note that, it does not filter list item, which is also type of map, for "omit empty" feature.
 func (m *Model) doFilterDataMapForInsertOrUpdate(data Map, allowOmitEmpty bool) Map {
 	if m.filter {
-		data = m.db.filterFields(m.tables, data)
+		data = m.db.filterFields(m.schema, m.tables, data)
 	}
 	// Remove key-value pairs of which the value is empty.
 	if allowOmitEmpty && m.option&OPTION_OMITEMPTY > 0 {
@@ -476,306 +984,26 @@ func (m *Model) doFilterDataMapForInsertOrUpdate(data Map, allowOmitEmpty bool) 
 	return data
 }
 
-// Insert does "INSERT INTO ..." statement for the model.
-func (m *Model) Insert() (result sql.Result, err error) {
-	defer func() {
-		if err == nil {
-			m.checkAndRemoveCache()
-		}
-	}()
-	if m.data == nil {
-		return nil, errors.New("inserting into table with empty data")
-	}
-
-	if list, ok := m.data.(List); ok {
-		// Batch insert.
-		batch := 10
-		if m.batch > 0 {
-			batch = m.batch
-		}
-		return m.db.doBatchInsert(
-			m.getLink(),
-			m.tables,
-			m.filterDataForInsertOrUpdate(list),
-			gINSERT_OPTION_DEFAULT,
-			batch,
-		)
-	} else if data, ok := m.data.(Map); ok {
-		// Single insert.
-		return m.db.doInsert(
-			m.getLink(),
-			m.tables,
-			m.filterDataForInsertOrUpdate(data),
-			gINSERT_OPTION_DEFAULT,
-		)
-	}
-	return nil, errors.New("inserting into table with invalid data type")
-}
-
-// Replace does "REPLACE INTO ..." statement for the model.
-func (m *Model) Replace() (result sql.Result, err error) {
-	defer func() {
-		if err == nil {
-			m.checkAndRemoveCache()
-		}
-	}()
-	if m.data == nil {
-		return nil, errors.New("replacing into table with empty data")
-	}
-	if list, ok := m.data.(List); ok {
-		// Batch replace.
-		batch := 10
-		if m.batch > 0 {
-			batch = m.batch
-		}
-		return m.db.doBatchInsert(
-			m.getLink(),
-			m.tables,
-			m.filterDataForInsertOrUpdate(list),
-			gINSERT_OPTION_REPLACE,
-			batch,
-		)
-	} else if data, ok := m.data.(Map); ok {
-		// Single insert.
-		return m.db.doInsert(
-			m.getLink(),
-			m.tables,
-			m.filterDataForInsertOrUpdate(data),
-			gINSERT_OPTION_REPLACE,
-		)
-	}
-	return nil, errors.New("replacing into table with invalid data type")
-}
-
-// Save does "INSERT INTO ... ON DUPLICATE KEY UPDATE..." statement for the model.
-// It updates the record if there's primary or unique index in the saving data,
-// or else it inserts a new record into the table.
-func (m *Model) Save() (result sql.Result, err error) {
-	defer func() {
-		if err == nil {
-			m.checkAndRemoveCache()
-		}
-	}()
-	if m.data == nil {
-		return nil, errors.New("saving into table with empty data")
-	}
-	if list, ok := m.data.(List); ok {
-		// Batch save.
-		batch := gDEFAULT_BATCH_NUM
-		if m.batch > 0 {
-			batch = m.batch
-		}
-		return m.db.doBatchInsert(
-			m.getLink(),
-			m.tables,
-			m.filterDataForInsertOrUpdate(list),
-			gINSERT_OPTION_SAVE,
-			batch,
-		)
-	} else if data, ok := m.data.(Map); ok {
-		// Single save.
-		return m.db.doInsert(
-			m.getLink(),
-			m.tables,
-			m.filterDataForInsertOrUpdate(data),
-			gINSERT_OPTION_SAVE,
-		)
-	}
-	return nil, errors.New("saving into table with invalid data type")
-}
-
-// Update does "UPDATE ... " statement for the model.
-func (m *Model) Update() (result sql.Result, err error) {
-	defer func() {
-		if err == nil {
-			m.checkAndRemoveCache()
-		}
-	}()
-	if m.data == nil {
-		return nil, errors.New("updating table with empty data")
-	}
-	condition, conditionArgs := m.formatCondition()
-	return m.db.doUpdate(
-		m.getLink(),
-		m.tables,
-		m.filterDataForInsertOrUpdate(m.data),
-		condition,
-		conditionArgs...,
-	)
-}
-
-// Delete does "DELETE FROM ... " statement for the model.
-func (m *Model) Delete() (result sql.Result, err error) {
-	defer func() {
-		if err == nil {
-			m.checkAndRemoveCache()
-		}
-	}()
-	condition, conditionArgs := m.formatCondition()
-	return m.db.doDelete(m.getLink(), m.tables, condition, conditionArgs...)
-}
-
-// Select is alias of All.
-// See All.
-func (m *Model) Select() (Result, error) {
-	return m.All()
-}
-
-// All does "SELECT FROM ..." statement for the model.
-// It retrieves the records from table and returns the result as slice type.
-// It returns nil if there's no record retrieved with the given conditions from table.
-func (m *Model) All() (Result, error) {
-	condition, conditionArgs := m.formatCondition()
-	return m.getAll(fmt.Sprintf("SELECT %s FROM %s%s", m.fields, m.tables, condition), conditionArgs...)
-}
-
-// One retrieves one record from table and returns the result as map type.
-// It returns nil if there's no record retrieved with the given conditions from table.
-func (m *Model) One() (Record, error) {
-	list, err := m.All()
-	if err != nil {
-		return nil, err
-	}
-	if len(list) > 0 {
-		return list[0], nil
-	}
-	return nil, nil
-}
-
-// Value retrieves a specified record value from table and returns the result as interface type.
-// It returns nil if there's no record found with the given conditions from table.
-func (m *Model) Value() (Value, error) {
-	one, err := m.One()
-	if err != nil {
-		return nil, err
-	}
-	for _, v := range one {
-		return v, nil
-	}
-	return nil, nil
-}
-
-// Struct retrieves one record from table and converts it into given struct.
-// The parameter <pointer> should be type of *struct/**struct. If type **struct is given,
-// it can create the struct internally during converting.
-//
-// Note that it returns sql.ErrNoRows if there's no record retrieved with the given conditions
-// from table.
-//
-// Eg:
-// user := new(User)
-// err  := db.Table("user").Where("id", 1).Struct(user)
-//
-// user := (*User)(nil)
-// err  := db.Table("user").Where("id", 1).Struct(&user)
-func (m *Model) Struct(pointer interface{}) error {
-	one, err := m.One()
-	if err != nil {
-		return err
-	}
-	if len(one) == 0 {
-		return sql.ErrNoRows
-	}
-	return one.Struct(pointer)
-}
-
-// Structs retrieves records from table and converts them into given struct slice.
-// The parameter <pointer> should be type of *[]struct/*[]*struct. It can create and fill the struct
-// slice internally during converting.
-//
-// Note that it returns sql.ErrNoRows if there's no record retrieved with the given conditions
-// from table.
-//
-// Eg:
-// users := ([]User)(nil)
-// err := db.Table("user").Structs(&users)
-//
-// users := ([]*User)(nil)
-// err := db.Table("user").Structs(&users)
-func (m *Model) Structs(pointer interface{}) error {
-	all, err := m.All()
-	if err != nil {
-		return err
-	}
-	if len(all) == 0 {
-		return sql.ErrNoRows
-	}
-	return all.Structs(pointer)
-}
-
-// Scan automatically calls Struct or Structs function according to the type of parameter <pointer>.
-// It calls function Struct if <pointer> is type of *struct/**struct.
-// It calls function Structs if <pointer> is type of *[]struct/*[]*struct.
-//
-// Note that it returns sql.ErrNoRows if there's no record retrieved with the given conditions
-// from table.
-//
-// Eg:
-// user := new(User)
-// err  := db.Table("user").Where("id", 1).Struct(user)
-//
-// user := (*User)(nil)
-// err  := db.Table("user").Where("id", 1).Struct(&user)
-//
-// users := ([]User)(nil)
-// err := db.Table("user").Structs(&users)
-//
-// users := ([]*User)(nil)
-// err := db.Table("user").Structs(&users)
-func (m *Model) Scan(pointer interface{}) error {
-	t := reflect.TypeOf(pointer)
-	k := t.Kind()
-	if k != reflect.Ptr {
-		return fmt.Errorf("params should be type of pointer, but got: %v", k)
-	}
-	switch t.Elem().Kind() {
-	case reflect.Array:
-	case reflect.Slice:
-		return m.Structs(pointer)
-	default:
-		return m.Struct(pointer)
-	}
-	return nil
-}
-
-// Count does "SELECT COUNT(x) FROM ..." statement for the model.
-func (m *Model) Count() (int, error) {
-	defer func(fields string) {
-		m.fields = fields
-	}(m.fields)
-	if m.fields == "" || m.fields == "*" {
-		m.fields = "COUNT(1)"
-	} else {
-		m.fields = fmt.Sprintf(`COUNT(%s)`, m.fields)
-	}
-	condition, conditionArgs := m.formatCondition()
-	s := fmt.Sprintf("SELECT %s FROM %s %s", m.fields, m.tables, condition)
-	if len(m.groupBy) > 0 {
-		s = fmt.Sprintf("SELECT COUNT(1) FROM (%s) count_alias", s)
-	}
-	list, err := m.getAll(s, conditionArgs...)
-	if err != nil {
-		return 0, err
-	}
-	if len(list) > 0 {
-		for _, v := range list[0] {
-			return v.Int(), nil
-		}
-	}
-	return 0, nil
-}
-
 // getLink returns the underlying database link object with configured <linkType> attribute.
-func (m *Model) getLink() dbLink {
+// The parameter <master> specifies whether using the master node if master-slave configured.
+func (m *Model) getLink(master bool) dbLink {
 	if m.tx != nil {
 		return m.tx.tx
 	}
-	switch m.linkType {
+	linkType := m.linkType
+	if linkType == 0 {
+		if master {
+			linkType = gLINK_TYPE_MASTER
+		} else {
+			linkType = gLINK_TYPE_SLAVE
+		}
+	}
+	switch linkType {
 	case gLINK_TYPE_MASTER:
-		link, _ := m.db.Master()
+		link, _ := m.db.getMaster(m.schema)
 		return link
 	case gLINK_TYPE_SLAVE:
-		link, _ := m.db.Slave()
+		link, _ := m.db.getSlave(m.schema)
 		return link
 	}
 	return nil
@@ -794,7 +1022,7 @@ func (m *Model) getAll(query string, args ...interface{}) (result Result, err er
 			return v.(Result), nil
 		}
 	}
-	result, err = m.db.doGetAll(m.getLink(), query, args...)
+	result, err = m.db.doGetAll(m.getLink(false), query, args...)
 	// Cache the result.
 	if len(cacheKey) > 0 && err == nil {
 		if m.cacheDuration < 0 {
@@ -806,6 +1034,23 @@ func (m *Model) getAll(query string, args ...interface{}) (result Result, err er
 	return result, err
 }
 
+// getPrimaryKey retrieves and returns the primary key name of the model table.
+// It parses m.tables to retrieve the primary table name, supporting m.tables like:
+// "user", "user u", "user as u, user_detail as ud".
+func (m *Model) getPrimaryKey() string {
+	table := gstr.SplitAndTrim(m.tables, " ")[0]
+	tableFields, err := m.db.TableFields(table)
+	if err != nil {
+		return ""
+	}
+	for name, field := range tableFields {
+		if gstr.ContainsI(field.Key, "pri") {
+			return name
+		}
+	}
+	return ""
+}
+
 // checkAndRemoveCache checks and remove the cache if necessary.
 func (m *Model) checkAndRemoveCache() {
 	if m.cacheEnabled && m.cacheDuration < 0 && len(m.cacheName) > 0 {
@@ -814,8 +1059,10 @@ func (m *Model) checkAndRemoveCache() {
 }
 
 // formatCondition formats where arguments of the model and returns a new condition sql and its arguments.
-// Note that this function does not change any of the attribute value of the mode.
-func (m *Model) formatCondition() (condition string, conditionArgs []interface{}) {
+// Note that this function does not change any attribute value of the <m>.
+//
+// The parameter <limit> specifies whether limits querying only one record if m.limit is not set.
+func (m *Model) formatCondition(limit bool) (condition string, conditionArgs []interface{}) {
 	var where string
 	if len(m.whereHolder) > 0 {
 		for _, v := range m.whereHolder {
@@ -870,36 +1117,11 @@ func (m *Model) formatCondition() (condition string, conditionArgs []interface{}
 		} else {
 			condition += fmt.Sprintf(" LIMIT %d", m.limit)
 		}
+	} else if limit {
+		condition += " LIMIT 1"
 	}
 	if m.offset >= 0 {
 		condition += fmt.Sprintf(" OFFSET %d", m.offset)
 	}
 	return
-}
-
-// Chunk iterates the table with given size and callback function.
-func (m *Model) Chunk(limit int, callback func(result Result, err error) bool) {
-	page := m.start
-	if page == 0 {
-		page = 1
-	}
-	model := m
-	for {
-		model = model.ForPage(page, limit)
-		data, err := model.All()
-		if err != nil {
-			callback(nil, err)
-			break
-		}
-		if len(data) == 0 {
-			break
-		}
-		if callback(data, err) == false {
-			break
-		}
-		if len(data) < limit {
-			break
-		}
-		page++
-	}
 }

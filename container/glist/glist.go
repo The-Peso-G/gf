@@ -364,6 +364,7 @@ func (l *List) Iterator(f func(e *Element) bool) {
 // If <f> returns true, then it continues iterating; or false to stop.
 func (l *List) IteratorAsc(f func(e *Element) bool) {
 	l.mu.RLock()
+	defer l.mu.RUnlock()
 	length := l.list.Len()
 	if length > 0 {
 		for i, e := 0, l.list.Front(); i < length; i, e = i+1, e.Next() {
@@ -372,13 +373,13 @@ func (l *List) IteratorAsc(f func(e *Element) bool) {
 			}
 		}
 	}
-	l.mu.RUnlock()
 }
 
 // IteratorDesc iterates the list in descending order with given callback function <f>.
 // If <f> returns true, then it continues iterating; or false to stop.
 func (l *List) IteratorDesc(f func(e *Element) bool) {
 	l.mu.RLock()
+	defer l.mu.RUnlock()
 	length := l.list.Len()
 	if length > 0 {
 		for i, e := 0, l.list.Back(); i < length; i, e = i+1, e.Prev() {
@@ -387,7 +388,6 @@ func (l *List) IteratorDesc(f func(e *Element) bool) {
 			}
 		}
 	}
-	l.mu.RUnlock()
 }
 
 // Join joins list elements with a string <glue>.
@@ -437,4 +437,23 @@ func (l *List) UnmarshalJSON(b []byte) error {
 	}
 	l.PushBacks(array)
 	return nil
+}
+
+// UnmarshalValue is an interface implement which sets any type of value for list.
+func (l *List) UnmarshalValue(value interface{}) (err error) {
+	if l.mu == nil {
+		l.mu = rwmutex.New()
+		l.list = list.New()
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var array []interface{}
+	switch value.(type) {
+	case string, []byte:
+		err = json.Unmarshal(gconv.Bytes(value), &array)
+	default:
+		array = gconv.SliceAny(value)
+	}
+	l.PushBacks(array)
+	return err
 }

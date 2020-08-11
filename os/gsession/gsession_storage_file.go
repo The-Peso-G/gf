@@ -8,6 +8,7 @@ package gsession
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/gogf/gf/container/gmap"
 	"github.com/gogf/gf/internal/intlog"
 	"os"
@@ -21,8 +22,6 @@ import (
 	"github.com/gogf/gf/encoding/gbinary"
 
 	"github.com/gogf/gf/os/gtime"
-
-	"github.com/gogf/gf/os/glog"
 
 	"github.com/gogf/gf/os/gfile"
 )
@@ -39,7 +38,7 @@ var (
 	DefaultStorageFilePath          = gfile.Join(gfile.TempDir(), "gsessions")
 	DefaultStorageFileCryptoKey     = []byte("Session storage file crypto key!")
 	DefaultStorageFileCryptoEnabled = false
-	DefaultStorageFileLoopInterval  = time.Minute
+	DefaultStorageFileLoopInterval  = 10 * time.Second
 )
 
 func init() {
@@ -55,15 +54,15 @@ func NewStorageFile(path ...string) *StorageFile {
 	if len(path) > 0 && path[0] != "" {
 		storagePath, _ = gfile.Search(path[0])
 		if storagePath == "" {
-			glog.Panicf("'%s' does not exist", path[0])
+			panic(fmt.Sprintf("'%s' does not exist", path[0]))
 		}
 		if !gfile.IsWritable(storagePath) {
-			glog.Panicf("'%s' is not writable", path[0])
+			panic(fmt.Sprintf("'%s' is not writable", path[0]))
 		}
 	}
 	if storagePath != "" {
 		if err := gfile.Mkdir(storagePath); err != nil {
-			glog.Panicf("mkdir '%s' failed: %v", path[0], err)
+			panic(fmt.Sprintf("mkdir '%s' failed: %v", path[0], err))
 		}
 	}
 	s := &StorageFile{
@@ -166,7 +165,7 @@ func (s *StorageFile) GetSession(id string, ttl time.Duration, data *gmap.StrAny
 	content := gfile.GetBytes(path)
 	if len(content) > 8 {
 		timestampMilli := gbinary.DecodeToInt64(content[:8])
-		if timestampMilli+ttl.Nanoseconds()/1e6 < gtime.Millisecond() {
+		if timestampMilli+ttl.Nanoseconds()/1e6 < gtime.TimestampMilli() {
 			return nil, nil
 		}
 		var err error
@@ -212,7 +211,7 @@ func (s *StorageFile) SetSession(id string, data *gmap.StrAnyMap, ttl time.Durat
 		return err
 	}
 	defer file.Close()
-	if _, err = file.Write(gbinary.EncodeInt64(gtime.Millisecond())); err != nil {
+	if _, err = file.Write(gbinary.EncodeInt64(gtime.TimestampMilli())); err != nil {
 		return err
 	}
 	if _, err = file.Write(content); err != nil {
@@ -240,7 +239,7 @@ func (s *StorageFile) doUpdateTTL(id string) error {
 	if err != nil {
 		return err
 	}
-	if _, err = file.WriteAt(gbinary.EncodeInt64(gtime.Millisecond()), 0); err != nil {
+	if _, err = file.WriteAt(gbinary.EncodeInt64(gtime.TimestampMilli()), 0); err != nil {
 		return err
 	}
 	return file.Close()

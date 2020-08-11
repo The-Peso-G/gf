@@ -1,29 +1,30 @@
 package main
 
 import (
-	"fmt"
 	"github.com/gogf/gf/frame/g"
-	"github.com/gogf/gf/util/gconv"
-	"reflect"
+	"github.com/gogf/gf/net/ghttp"
+	"github.com/gogf/gf/os/glog"
 )
 
-// 结构体
-type Data struct {
-	Name string `json:"name"`
-	Age  int    `json:"age"`
-}
-
 func main() {
-	data := Data{Name: "abcdefg"}
-	data1 := Data{}
-	data2 := Data{}
+	s := g.Server()
+	s.Group("/api.v2", func(group *ghttp.RouterGroup) {
+		group.ALL("/user/list", func(r *ghttp.Request) {
+			glog.Debug(r.Method, r.RequestURI)
 
-	g.Redis().Do("SET", "goods:id", data)
-	v, _ := g.Redis().DoVar("GET", "goods:id")
+			paramKey := "X-CSRF-Token"
 
-	v.Struct(&data1)
-	gconv.Struct(v, &data2)
+			// // www-form or query
+			// glog.Debug("go:", r.Request.FormValue(paramKey))
 
-	fmt.Println(v, data1, data2)
-	fmt.Println(reflect.TypeOf(v), reflect.TypeOf(data1))
+			// // post form-data
+			// glog.Debug("go form:", r.Request.PostFormValue(paramKey))
+
+			glog.Debug("gf GetString:", r.GetString(paramKey))
+			glog.Debug("gf GetFormString:", r.GetFormString(paramKey))
+			r.Response.Writeln("list")
+		})
+	})
+	s.SetPort(8199)
+	s.Run()
 }

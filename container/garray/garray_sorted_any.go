@@ -9,6 +9,7 @@ package garray
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"github.com/gogf/gf/text/gstr"
 	"github.com/gogf/gf/util/gutil"
 	"math"
@@ -48,6 +49,21 @@ func NewSortedArraySize(cap int, comparator func(a, b interface{}) int, safe ...
 		array:      make([]interface{}, 0, cap),
 		comparator: comparator,
 	}
+}
+
+// NewSortedArrayRange creates and returns a array by a range from <start> to <end>
+// with step value <step>.
+func NewSortedArrayRange(start, end, step int, comparator func(a, b interface{}) int, safe ...bool) *SortedArray {
+	if step == 0 {
+		panic(fmt.Sprintf(`invalid step value: %d`, step))
+	}
+	slice := make([]interface{}, (end-start+1)/step)
+	index := 0
+	for i := start; i <= end; i += step {
+		slice[index] = i
+		index++
+	}
+	return NewSortedArrayFrom(slice, comparator, safe...)
 }
 
 // NewSortedArrayFrom creates and returns an sorted array with given slice <array>.
@@ -144,6 +160,9 @@ func (a *SortedArray) Get(index int) interface{} {
 func (a *SortedArray) Remove(index int) interface{} {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if index < 0 || index >= len(a.array) {
+		return nil
+	}
 	// Determine array boundaries when deleting to improve deletion efficiency.
 	if index == 0 {
 		value := a.array[0]
@@ -160,6 +179,16 @@ func (a *SortedArray) Remove(index int) interface{} {
 	value := a.array[index]
 	a.array = append(a.array[:index], a.array[index+1:]...)
 	return value
+}
+
+// RemoveValue removes an item by value.
+// It returns true if value is found in the array, or else false if not found.
+func (a *SortedArray) RemoveValue(value interface{}) bool {
+	if i := a.Search(value); i != -1 {
+		a.Remove(i)
+		return true
+	}
+	return false
 }
 
 // PopLeft pops and returns an item from the beginning of array.
@@ -554,6 +583,35 @@ func (a *SortedArray) CountValues() map[interface{}]int {
 	return m
 }
 
+// Iterator is alias of IteratorAsc.
+func (a *SortedArray) Iterator(f func(k int, v interface{}) bool) {
+	a.IteratorAsc(f)
+}
+
+// IteratorAsc iterates the array in ascending order with given callback function <f>.
+// If <f> returns true, then it continues iterating; or false to stop.
+func (a *SortedArray) IteratorAsc(f func(k int, v interface{}) bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for k, v := range a.array {
+		if !f(k, v) {
+			break
+		}
+	}
+}
+
+// IteratorDesc iterates the array in descending order with given callback function <f>.
+// If <f> returns true, then it continues iterating; or false to stop.
+func (a *SortedArray) IteratorDesc(f func(k int, v interface{}) bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for i := len(a.array) - 1; i >= 0; i-- {
+		if !f(i, a.array[i]) {
+			break
+		}
+	}
+}
+
 // String returns current array as a string, which implements like json.Marshal does.
 func (a *SortedArray) String() string {
 	a.mu.RLock()
@@ -597,10 +655,34 @@ func (a *SortedArray) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &a.array); err != nil {
 		return err
 	}
-	if a.comparator != nil {
+	if a.comparator != nil && a.array != nil {
 		sort.Slice(a.array, func(i, j int) bool {
 			return a.comparator(a.array[i], a.array[j]) < 0
 		})
 	}
 	return nil
+}
+
+// UnmarshalValue is an interface implement which sets any type of value for array.
+func (a *SortedArray) UnmarshalValue(value interface{}) (err error) {
+	if a.mu == nil {
+		a.mu = rwmutex.New()
+		a.unique = gtype.NewBool()
+		// Note that the comparator is string comparator in default.
+		a.comparator = gutil.ComparatorString
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	switch value.(type) {
+	case string, []byte:
+		err = json.Unmarshal(gconv.Bytes(value), &a.array)
+	default:
+		a.array = gconv.SliceAny(value)
+	}
+	if a.comparator != nil && a.array != nil {
+		sort.Slice(a.array, func(i, j int) bool {
+			return a.comparator(a.array[i], a.array[j]) < 0
+		})
+	}
+	return err
 }

@@ -10,7 +10,6 @@ package gconv
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/gogf/gf/internal/empty"
 	"github.com/gogf/gf/os/gtime"
 	"reflect"
 	"strconv"
@@ -213,7 +212,8 @@ func String(i interface{}) string {
 		}
 		return value.String()
 	default:
-		if empty.IsNil(value) {
+		// Empty checks.
+		if value == nil {
 			return ""
 		}
 		if f, ok := value.(apiString); ok {
@@ -225,6 +225,24 @@ func String(i interface{}) string {
 			// then use that interface to perform the conversion
 			return f.Error()
 		} else {
+			// Reflect checks.
+			rv := reflect.ValueOf(value)
+			kind := rv.Kind()
+			switch kind {
+			case reflect.Chan,
+				reflect.Map,
+				reflect.Slice,
+				reflect.Func,
+				reflect.Ptr,
+				reflect.Interface,
+				reflect.UnsafePointer:
+				if rv.IsNil() {
+					return ""
+				}
+			}
+			if kind == reflect.Ptr {
+				return String(rv.Elem().Interface())
+			}
 			// Finally we use json.Marshal to convert.
 			if jsonContent, err := json.Marshal(value); err != nil {
 				return fmt.Sprint(value)
@@ -360,20 +378,38 @@ func Int64(i interface{}) int64 {
 		return gbinary.DecodeToInt64(value)
 	default:
 		s := String(value)
+		isMinus := false
+		if len(s) > 0 {
+			if s[0] == '-' {
+				isMinus = true
+				s = s[1:]
+			} else if s[0] == '+' {
+				s = s[1:]
+			}
+		}
 		// Hexadecimal
 		if len(s) > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') {
 			if v, e := strconv.ParseInt(s[2:], 16, 64); e == nil {
+				if isMinus {
+					return -v
+				}
 				return v
 			}
 		}
 		// Octal
 		if len(s) > 1 && s[0] == '0' {
 			if v, e := strconv.ParseInt(s[1:], 8, 64); e == nil {
+				if isMinus {
+					return -v
+				}
 				return v
 			}
 		}
 		// Decimal
 		if v, e := strconv.ParseInt(s, 10, 64); e == nil {
+			if isMinus {
+				return -v
+			}
 			return v
 		}
 		// Float64

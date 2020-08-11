@@ -131,6 +131,9 @@ func (a *SortedStrArray) Get(index int) string {
 func (a *SortedStrArray) Remove(index int) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if index < 0 || index >= len(a.array) {
+		return ""
+	}
 	// Determine array boundaries when deleting to improve deletion efficiency.
 	if index == 0 {
 		value := a.array[0]
@@ -147,6 +150,16 @@ func (a *SortedStrArray) Remove(index int) string {
 	value := a.array[index]
 	a.array = append(a.array[:index], a.array[index+1:]...)
 	return value
+}
+
+// RemoveValue removes an item by value.
+// It returns true if value is found in the array, or else false if not found.
+func (a *SortedStrArray) RemoveValue(value string) bool {
+	if i := a.Search(value); i != -1 {
+		a.Remove(i)
+		return true
+	}
+	return false
 }
 
 // PopLeft pops and returns an item from the beginning of array.
@@ -547,6 +560,35 @@ func (a *SortedStrArray) CountValues() map[string]int {
 	return m
 }
 
+// Iterator is alias of IteratorAsc.
+func (a *SortedStrArray) Iterator(f func(k int, v string) bool) {
+	a.IteratorAsc(f)
+}
+
+// IteratorAsc iterates the array in ascending order with given callback function <f>.
+// If <f> returns true, then it continues iterating; or false to stop.
+func (a *SortedStrArray) IteratorAsc(f func(k int, v string) bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for k, v := range a.array {
+		if !f(k, v) {
+			break
+		}
+	}
+}
+
+// IteratorDesc iterates the array in descending order with given callback function <f>.
+// If <f> returns true, then it continues iterating; or false to stop.
+func (a *SortedStrArray) IteratorDesc(f func(k int, v string) bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for i := len(a.array) - 1; i >= 0; i-- {
+		if !f(i, a.array[i]) {
+			break
+		}
+	}
+}
+
 // String returns current array as a string, which implements like json.Marshal does.
 func (a *SortedStrArray) String() string {
 	a.mu.RLock()
@@ -583,6 +625,30 @@ func (a *SortedStrArray) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &a.array); err != nil {
 		return err
 	}
-	sort.Strings(a.array)
+	if a.array != nil {
+		sort.Strings(a.array)
+	}
 	return nil
+}
+
+// UnmarshalValue is an interface implement which sets any type of value for array.
+func (a *SortedStrArray) UnmarshalValue(value interface{}) (err error) {
+	if a.mu == nil {
+		a.mu = rwmutex.New()
+		a.unique = gtype.NewBool()
+		// Note that the comparator is string comparator in default.
+		a.comparator = defaultComparatorStr
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	switch value.(type) {
+	case string, []byte:
+		err = json.Unmarshal(gconv.Bytes(value), &a.array)
+	default:
+		a.array = gconv.SliceStr(value)
+	}
+	if a.array != nil {
+		sort.Strings(a.array)
+	}
+	return err
 }

@@ -13,19 +13,20 @@ import (
 	_ "github.com/gf-third/mysql"
 )
 
-// 数据库链接对象
 type dbMysql struct {
 	*dbBase
 }
 
-// 创建SQL操作对象，内部采用了lazy link处理
+// Open creates and returns a underlying database connection with given configuration.
 func (db *dbMysql) Open(config *ConfigNode) (*sql.DB, error) {
 	var source string
 	if config.LinkInfo != "" {
 		source = config.LinkInfo
 	} else {
-		source = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=%s&multiStatements=true&parseTime=true&loc=Local",
-			config.User, config.Pass, config.Host, config.Port, config.Name, config.Charset)
+		source = fmt.Sprintf(
+			"%s:%s@tcp(%s:%s)/%s?charset=%s&multiStatements=true&parseTime=true&loc=Local",
+			config.User, config.Pass, config.Host, config.Port, config.Name, config.Charset,
+		)
 	}
 	if db, err := sql.Open("gf-mysql", source); err == nil {
 		return db, nil
@@ -34,12 +35,12 @@ func (db *dbMysql) Open(config *ConfigNode) (*sql.DB, error) {
 	}
 }
 
-// 获得关键字操作符
+// getChars returns the quote chars for field.
 func (db *dbMysql) getChars() (charLeft string, charRight string) {
 	return "`", "`"
 }
 
-// 在执行sql之前对sql进行进一步处理
-func (db *dbMysql) handleSqlBeforeExec(query string) string {
-	return query
+// handleSqlBeforeExec handles the sql before posts it to database.
+func (db *dbMysql) handleSqlBeforeExec(sql string) string {
+	return sql
 }

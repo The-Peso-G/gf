@@ -77,6 +77,10 @@ func TestSortedStrArray_Remove(t *testing.T) {
 	gtest.Case(t, func() {
 		a1 := []string{"a", "d", "c", "b"}
 		array1 := garray.NewSortedStrArrayFrom(a1)
+
+		gtest.Assert(array1.Remove(-1), "")
+		gtest.Assert(array1.Remove(100000), "")
+
 		gtest.Assert(array1.Remove(2), "c")
 		gtest.Assert(array1.Get(2), "d")
 		gtest.Assert(array1.Len(), 3)
@@ -474,5 +478,93 @@ func TestSortedStrArray_Json(t *testing.T) {
 		gtest.Assert(err, nil)
 		gtest.Assert(user.Name, data["Name"])
 		gtest.Assert(user.Scores, []string{"A", "A", "A+"})
+	})
+}
+
+func TestSortedStrArray_Iterator(t *testing.T) {
+	slice := g.SliceStr{"a", "b", "d", "c"}
+	array := garray.NewSortedStrArrayFrom(slice)
+	gtest.Case(t, func() {
+		array.Iterator(func(k int, v string) bool {
+			gtest.Assert(v, slice[k])
+			return true
+		})
+	})
+	gtest.Case(t, func() {
+		array.IteratorAsc(func(k int, v string) bool {
+			gtest.Assert(v, slice[k])
+			return true
+		})
+	})
+	gtest.Case(t, func() {
+		array.IteratorDesc(func(k int, v string) bool {
+			gtest.Assert(v, slice[k])
+			return true
+		})
+	})
+	gtest.Case(t, func() {
+		index := 0
+		array.Iterator(func(k int, v string) bool {
+			index++
+			return false
+		})
+		gtest.Assert(index, 1)
+	})
+	gtest.Case(t, func() {
+		index := 0
+		array.IteratorAsc(func(k int, v string) bool {
+			index++
+			return false
+		})
+		gtest.Assert(index, 1)
+	})
+	gtest.Case(t, func() {
+		index := 0
+		array.IteratorDesc(func(k int, v string) bool {
+			index++
+			return false
+		})
+		gtest.Assert(index, 1)
+	})
+}
+
+func TestSortedStrArray_RemoveValue(t *testing.T) {
+	slice := g.SliceStr{"a", "b", "d", "c"}
+	array := garray.NewSortedStrArrayFrom(slice)
+	gtest.Case(t, func() {
+		gtest.Assert(array.RemoveValue("e"), false)
+		gtest.Assert(array.RemoveValue("b"), true)
+		gtest.Assert(array.RemoveValue("a"), true)
+		gtest.Assert(array.RemoveValue("c"), true)
+		gtest.Assert(array.RemoveValue("f"), false)
+	})
+}
+
+func TestSortedStrArray_UnmarshalValue(t *testing.T) {
+	type T struct {
+		Name  string
+		Array *garray.SortedStrArray
+	}
+	// JSON
+	gtest.Case(t, func() {
+		var t *T
+		err := gconv.Struct(g.Map{
+			"name":  "john",
+			"array": []byte(`["1","3","2"]`),
+		}, &t)
+		gtest.Assert(err, nil)
+		gtest.Assert(t.Name, "john")
+		gtest.Assert(t.Array.Slice(), g.SliceStr{"1", "2", "3"})
+	})
+	// Map
+	gtest.Case(t, func() {
+		var t *T
+		err := gconv.Struct(g.Map{
+			"name":  "john",
+			"array": g.SliceStr{"1", "3", "2"},
+		}, &t)
+		gtest.Assert(err, nil)
+		gtest.Assert(t.Name, "john")
+		gtest.Assert(t.Array.Slice(), g.SliceStr{"1", "2", "3"})
 	})
 }

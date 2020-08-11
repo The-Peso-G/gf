@@ -78,6 +78,10 @@ func TestSortedIntArray_Remove(t *testing.T) {
 	gtest.Case(t, func() {
 		a1 := []int{1, 3, 5, 0}
 		array1 := garray.NewSortedIntArrayFrom(a1)
+
+		gtest.Assert(array1.Remove(-1), 0)
+		gtest.Assert(array1.Remove(100000), 0)
+
 		i1 := array1.Remove(2)
 		gtest.Assert(i1, 3)
 		gtest.Assert(array1.Search(5), 2)
@@ -464,5 +468,94 @@ func TestSortedIntArray_Json(t *testing.T) {
 		gtest.Assert(err, nil)
 		gtest.Assert(user.Name, data["Name"])
 		gtest.Assert(user.Scores, []int{98, 99, 100})
+	})
+}
+
+func TestSortedIntArray_Iterator(t *testing.T) {
+	slice := g.SliceInt{10, 20, 30, 40}
+	array := garray.NewSortedIntArrayFrom(slice)
+	gtest.Case(t, func() {
+		array.Iterator(func(k int, v int) bool {
+			gtest.Assert(v, slice[k])
+			return true
+		})
+	})
+	gtest.Case(t, func() {
+		array.IteratorAsc(func(k int, v int) bool {
+			gtest.Assert(v, slice[k])
+			return true
+		})
+	})
+	gtest.Case(t, func() {
+		array.IteratorDesc(func(k int, v int) bool {
+			gtest.Assert(v, slice[k])
+			return true
+		})
+	})
+	gtest.Case(t, func() {
+		index := 0
+		array.Iterator(func(k int, v int) bool {
+			index++
+			return false
+		})
+		gtest.Assert(index, 1)
+	})
+	gtest.Case(t, func() {
+		index := 0
+		array.IteratorAsc(func(k int, v int) bool {
+			index++
+			return false
+		})
+		gtest.Assert(index, 1)
+	})
+	gtest.Case(t, func() {
+		index := 0
+		array.IteratorDesc(func(k int, v int) bool {
+			index++
+			return false
+		})
+		gtest.Assert(index, 1)
+	})
+}
+
+func TestSortedIntArray_RemoveValue(t *testing.T) {
+	slice := g.SliceInt{10, 20, 30, 40}
+	array := garray.NewSortedIntArrayFrom(slice)
+	gtest.Case(t, func() {
+		gtest.Assert(array.RemoveValue(99), false)
+		gtest.Assert(array.RemoveValue(20), true)
+		gtest.Assert(array.RemoveValue(10), true)
+		gtest.Assert(array.RemoveValue(20), false)
+		gtest.Assert(array.RemoveValue(88), false)
+		gtest.Assert(array.Len(), 2)
+	})
+}
+
+func TestSortedIntArray_UnmarshalValue(t *testing.T) {
+	type T struct {
+		Name  string
+		Array *garray.SortedIntArray
+	}
+	// JSON
+	gtest.Case(t, func() {
+		var t *T
+		err := gconv.Struct(g.Map{
+			"name":  "john",
+			"array": []byte(`[2,3,1]`),
+		}, &t)
+		gtest.Assert(err, nil)
+		gtest.Assert(t.Name, "john")
+		gtest.Assert(t.Array.Slice(), g.Slice{1, 2, 3})
+	})
+	// Map
+	gtest.Case(t, func() {
+		var t *T
+		err := gconv.Struct(g.Map{
+			"name":  "john",
+			"array": g.Slice{2, 3, 1},
+		}, &t)
+		gtest.Assert(err, nil)
+		gtest.Assert(t.Name, "john")
+		gtest.Assert(t.Array.Slice(), g.Slice{1, 2, 3})
 	})
 }

@@ -15,7 +15,6 @@ import (
 	"github.com/gogf/gf/debug/gdebug"
 
 	"github.com/gogf/gf/container/glist"
-	"github.com/gogf/gf/os/glog"
 	"github.com/gogf/gf/text/gregex"
 	"github.com/gogf/gf/text/gstr"
 )
@@ -63,20 +62,22 @@ func (s *Server) setHandler(pattern string, handler *handlerItem) {
 	handler.itemId = handlerIdGenerator.Add(1)
 	domain, method, uri, err := s.parsePattern(pattern)
 	if err != nil {
-		glog.Fatal("invalid pattern:", pattern, err)
+		s.Logger().Fatal("invalid pattern:", pattern, err)
 		return
 	}
 	if len(uri) == 0 || uri[0] != '/' {
-		glog.Fatal("invalid pattern:", pattern, "URI should lead with '/'")
+		s.Logger().Fatal("invalid pattern:", pattern, "URI should lead with '/'")
 		return
 	}
 	// 注册地址记录及重复注册判断
 	regKey := s.handlerKey(handler.hookName, method, uri, domain)
-	switch handler.itemType {
-	case gHANDLER_TYPE_HANDLER, gHANDLER_TYPE_OBJECT, gHANDLER_TYPE_CONTROLLER:
-		if item, ok := s.routesMap[regKey]; ok {
-			glog.Fatalf(`duplicated route registry "%s", already registered at %s`, pattern, item[0].file)
-			return
+	if !s.config.RouteOverWrite {
+		switch handler.itemType {
+		case gHANDLER_TYPE_HANDLER, gHANDLER_TYPE_OBJECT, gHANDLER_TYPE_CONTROLLER:
+			if item, ok := s.routesMap[regKey]; ok {
+				s.Logger().Fatalf(`duplicated route registry "%s", already registered at %s`, pattern, item[0].file)
+				return
+			}
 		}
 	}
 	// 注册的路由信息对象
@@ -263,7 +264,14 @@ func (s *Server) compareRouterPriority(newItem *handlerItem, oldItem *handlerIte
 		return true
 	}
 
-	// 最后新的规则比旧的规则优先级低
+	// 如果是服务路由，那么新的规则比旧的规则优先级高(路由覆盖)
+	if newItem.itemType == gHANDLER_TYPE_HANDLER ||
+		newItem.itemType == gHANDLER_TYPE_OBJECT ||
+		newItem.itemType == gHANDLER_TYPE_CONTROLLER {
+		return true
+	}
+
+	// 如果是其他路由(HOOK/中间件)，那么新的规则比旧的规则优先级低，使得注册相同路由则顺序执行
 	return false
 }
 

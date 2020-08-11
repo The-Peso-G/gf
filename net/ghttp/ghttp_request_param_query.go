@@ -15,7 +15,7 @@ import (
 
 // SetQuery sets custom query value with key-value pair.
 func (r *Request) SetQuery(key string, value interface{}) {
-	r.ParseQuery()
+	r.parseQuery()
 	if r.queryMap == nil {
 		r.queryMap = make(map[string]interface{})
 	}
@@ -29,13 +29,13 @@ func (r *Request) SetQuery(key string, value interface{}) {
 // Note that if there're multiple parameters with the same name, the parameters are retrieved and overwrote
 // in order of priority: query > body.
 func (r *Request) GetQuery(key string, def ...interface{}) interface{} {
-	r.ParseQuery()
+	r.parseQuery()
 	if len(r.queryMap) > 0 {
 		if v, ok := r.queryMap[key]; ok {
 			return v
 		}
 	}
-	r.ParseBody()
+	r.parseBody()
 	if len(r.bodyMap) > 0 {
 		if v, ok := r.bodyMap[key]; ok {
 			return v
@@ -118,8 +118,8 @@ func (r *Request) GetQueryInterfaces(key string, def ...interface{}) []interface
 // Note that if there're multiple parameters with the same name, the parameters are retrieved and overwrote
 // in order of priority: query > body.
 func (r *Request) GetQueryMap(kvMap ...map[string]interface{}) map[string]interface{} {
-	r.ParseQuery()
-	r.ParseBody()
+	r.parseQuery()
+	r.parseBody()
 	var m map[string]interface{}
 	if len(kvMap) > 0 && kvMap[0] != nil {
 		if len(r.queryMap) == 0 && len(r.bodyMap) == 0 {
@@ -188,12 +188,12 @@ func (r *Request) GetQueryMapStrVar(kvMap ...map[string]interface{}) map[string]
 	return nil
 }
 
-// GetQueryToStruct retrieves all parameters passed from client using HTTP GET method
+// GetQueryStruct retrieves all parameters passed from client using HTTP GET method
 // and converts them to given struct object. Note that the parameter <pointer> is a pointer
 // to the struct object. The optional parameter <mapping> is used to specify the key to
 // attribute mapping.
-func (r *Request) GetQueryToStruct(pointer interface{}, mapping ...map[string]string) error {
-	r.ParseQuery()
+func (r *Request) GetQueryStruct(pointer interface{}, mapping ...map[string]string) error {
+	r.parseQuery()
 	tagMap := structs.TagMapName(pointer, paramTagPriority, true)
 	if len(mapping) > 0 {
 		for k, v := range mapping[0] {
@@ -201,4 +201,10 @@ func (r *Request) GetQueryToStruct(pointer interface{}, mapping ...map[string]st
 		}
 	}
 	return gconv.StructDeep(r.GetQueryMap(), pointer, tagMap)
+}
+
+// GetQueryToStruct is alias of GetQueryStruct. See GetQueryStruct.
+// Deprecated.
+func (r *Request) GetQueryToStruct(pointer interface{}, mapping ...map[string]string) error {
+	return r.GetQueryStruct(pointer, mapping...)
 }

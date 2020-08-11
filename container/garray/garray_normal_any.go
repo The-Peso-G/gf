@@ -9,6 +9,7 @@ package garray
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"github.com/gogf/gf/text/gstr"
 	"math"
 	"sort"
@@ -43,6 +44,21 @@ func NewArraySize(size int, cap int, safe ...bool) *Array {
 		mu:    rwmutex.New(safe...),
 		array: make([]interface{}, size, cap),
 	}
+}
+
+// NewArrayRange creates and returns a array by a range from <start> to <end>
+// with step value <step>.
+func NewArrayRange(start, end, step int, safe ...bool) *Array {
+	if step == 0 {
+		panic(fmt.Sprintf(`invalid step value: %d`, step))
+	}
+	slice := make([]interface{}, (end-start+1)/step)
+	index := 0
+	for i := start; i <= end; i += step {
+		slice[index] = i
+		index++
+	}
+	return NewArrayFrom(slice, safe...)
 }
 
 // See NewArrayFrom.
@@ -160,6 +176,9 @@ func (a *Array) InsertAfter(index int, value interface{}) *Array {
 func (a *Array) Remove(index int) interface{} {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if index < 0 || index >= len(a.array) {
+		return nil
+	}
 	// Determine array boundaries when deleting to improve deletion efficiency。
 	if index == 0 {
 		value := a.array[0]
@@ -176,6 +195,16 @@ func (a *Array) Remove(index int) interface{} {
 	value := a.array[index]
 	a.array = append(a.array[:index], a.array[index+1:]...)
 	return value
+}
+
+// RemoveValue removes an item by value.
+// It returns true if value is found in the array, or else false if not found.
+func (a *Array) RemoveValue(value interface{}) bool {
+	if i := a.Search(value); i != -1 {
+		a.Remove(i)
+		return true
+	}
+	return false
 }
 
 // PushLeft pushes one or multiple items to the beginning of array.
@@ -402,9 +431,6 @@ func (a *Array) Contains(value interface{}) bool {
 // Search searches array by <value>, returns the index of <value>,
 // or returns -1 if not exists.
 func (a *Array) Search(value interface{}) int {
-	if len(a.array) == 0 {
-		return -1
-	}
 	a.mu.RLock()
 	result := -1
 	for index, v := range a.array {
@@ -414,7 +440,20 @@ func (a *Array) Search(value interface{}) int {
 		}
 	}
 	a.mu.RUnlock()
+	return result
+}
 
+func (a *Array) doSearch(value interface{}) int {
+	if len(a.array) == 0 {
+		return -1
+	}
+	result := -1
+	for index, v := range a.array {
+		if v == value {
+			result = index
+			break
+		}
+	}
 	return result
 }
 
@@ -609,6 +648,35 @@ func (a *Array) CountValues() map[interface{}]int {
 	return m
 }
 
+// Iterator is alias of IteratorAsc.
+func (a *Array) Iterator(f func(k int, v interface{}) bool) {
+	a.IteratorAsc(f)
+}
+
+// IteratorAsc iterates the array in ascending order with given callback function <f>.
+// If <f> returns true, then it continues iterating; or false to stop.
+func (a *Array) IteratorAsc(f func(k int, v interface{}) bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for k, v := range a.array {
+		if !f(k, v) {
+			break
+		}
+	}
+}
+
+// IteratorDesc iterates the array in descending order with given callback function <f>.
+// If <f> returns true, then it continues iterating; or false to stop.
+func (a *Array) IteratorDesc(f func(k int, v interface{}) bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for i := len(a.array) - 1; i >= 0; i-- {
+		if !f(i, a.array[i]) {
+			break
+		}
+	}
+}
+
 // String returns current array as a string, which implements like json.Marshal does.
 func (a *Array) String() string {
 	a.mu.RLock()
@@ -648,6 +716,22 @@ func (a *Array) UnmarshalJSON(b []byte) error {
 	defer a.mu.Unlock()
 	if err := json.Unmarshal(b, &a.array); err != nil {
 		return err
+	}
+	return nil
+}
+
+// UnmarshalValue is an interface implement which sets any type of value for array.
+func (a *Array) UnmarshalValue(value interface{}) error {
+	if a.mu == nil {
+		a.mu = rwmutex.New()
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	switch value.(type) {
+	case string, []byte:
+		return json.Unmarshal(gconv.Bytes(value), &a.array)
+	default:
+		a.array = gconv.SliceAny(value)
 	}
 	return nil
 }
